@@ -41,14 +41,16 @@ def setup_database():
 	# 2. Best Parameters table (for storing optimized strategy parameters)
 	cursor.execute("""
 		CREATE TABLE IF NOT EXISTS best_parameters (
-			ticker TEXT PRIMARY KEY,
+			ticker TEXT,
 			asset_class TEXT,
+			is_active INTEGER DEFAULT 1,
 			fast_ema INTEGER,
 			slow_ema INTEGER,
 			trailing_stop REAL,
 			strategy_name TEXT,
 			parameters TEXT,
-			last_updated TEXT
+			last_updated TEXT,
+			PRIMARY KEY (ticker, asset_class)
 		)
 	""")
 
@@ -108,27 +110,41 @@ def setup_database():
 	logger.info("Database setup complete.")
 
 
-def get_best_parameters(ticker="SOL/USD"):
+def get_best_parameters(ticker="SOL/USD", asset_class=None):
 	"""
 	Retrieves the best parameters for a given ticker from the best_parameters table.
-	Only returns parameters for active tickers (active = 1).
-	Returns a dictionary with parameters, or None if not found.
+	Only returns parameters where is_active = 1.
+
+	Args:
+		ticker: Ticker symbol (e.g., 'SOL/USD')
+		asset_class: Optional filter by asset class ('STOCK', 'CRYPTO', etc.)
+
+	Returns:
+		Dictionary with parameters, or None if not found.
 	"""
 	conn = get_db_connection()
 	cursor = conn.cursor()
 
 	try:
-		query = """
-			SELECT bp.ticker, bp.asset_class, bp.fast_ema, bp.slow_ema, bp.trailing_stop,
-					bp.strategy_name, bp.parameters, bp.last_updated
-			FROM best_parameters bp
-			JOIN tickers t ON bp.ticker = t.ticker
-			WHERE t.active = 1 AND bp.ticker = ?
-		"""
-		result = cursor.execute(query, (ticker,)).fetchone()
+		if asset_class:
+			query = """
+				SELECT ticker, asset_class, is_active, fast_ema, slow_ema, trailing_stop,
+						strategy_name, parameters, last_updated
+				FROM best_parameters
+				WHERE is_active = 1 AND ticker = ? AND asset_class = ?
+			"""
+			result = cursor.execute(query, (ticker, asset_class)).fetchone()
+		else:
+			query = """
+				SELECT ticker, asset_class, is_active, fast_ema, slow_ema, trailing_stop,
+						strategy_name, parameters, last_updated
+				FROM best_parameters
+				WHERE is_active = 1 AND ticker = ?
+			"""
+			result = cursor.execute(query, (ticker,)).fetchone()
 
 		if result:
-			ticker, asset_class, fast_ema, slow_ema, trailing_stop, strategy_name, params_json, last_updated = result
+			ticker_val, asset_cls, is_active, fast_ema, slow_ema, trailing_stop, strategy_name, params_json, last_updated = result
 
 			# If parameters column has JSON, parse it; otherwise use individual columns
 			if params_json:
@@ -136,25 +152,30 @@ def get_best_parameters(ticker="SOL/USD"):
 					params = json.loads(params_json)
 				except:
 					params = {
+						"ticker": ticker_val,
+						"asset_class": asset_cls,
 						"fast_ema": fast_ema,
 						"slow_ema": slow_ema,
 						"trailing_stop": trailing_stop,
-						"strategy_name": strategy_name
+						"strategy_name": strategy_name,
+						"is_active": is_active
 					}
 			else:
 				params = {
+					"ticker": ticker_val,
+					"asset_class": asset_cls,
+					"is_active": is_active,
 					"fast_ema": fast_ema,
 					"slow_ema": slow_ema,
 					"trailing_stop": trailing_stop,
 					"strategy_name": strategy_name,
-					"asset_class": asset_class,
 					"last_updated": last_updated
 				}
 
-			logger.info(f"Loaded parameters for {ticker}: {params}")
+			logger.info(f"Loaded parameters for {ticker_val}: {params}")
 			return params
 
-		logger.warning(f"No parameters found for ticker {ticker}")
+		logger.warning(f"No active parameters found for ticker {ticker}")
 		return None
 
 	except Exception as e:
@@ -283,26 +304,39 @@ def get_today_trades(ticker="SOL/USD"):
 		conn.close()
 
 
-def save_best_parameters(ticker, parameters, asset_class='crypto', strategy_name='ai_trader_gemini'):
-	"""Saves or updates the best parameters for a ticker."""
+def save_best_parameters(ticker, parameters, asset_class='crypto', strategy_name='ai_trader_gemini', is_active=1):
+	"""
+	Saves or updates the best parameters for a ticker.
+
+	Args:
+		ticker: Ticker symbol
+		parameters: Dict of parameters or JSON string
+		asset_class: Asset class (e.g., 'STOCK', 'CRYPTO')
+		strategy_name: Strategy name
+		is_active: Whether parameters are active (1) or inactive (0)
+	"""
 	conn = get_db_connection()
 	cursor = conn.cursor()
 
 	try:
-		params_json = json.dumps(parameters)
+		if isinstance(parameters, dict):
+			params_json = json.dumps(parameters)
+		else:
+			params_json = parameters
+
 		cursor.execute("""
-			INSERT INTO best_parameters (ticker, asset_class, strategy_name, parameters, last_updated)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(ticker) DO UPDATE SET
-				asset_class = excluded.asset_class,
+			INSERT INTO best_parameters (ticker, asset_class, strategy_name, parameters, is_active, last_updated)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(ticker, asset_class) DO UPDATE SET
 				strategy_name = excluded.strategy_name,
 				parameters = excluded.parameters,
+				is_active = excluded.is_active,
 				last_updated = excluded.last_updated
 		""", (
-			ticker, asset_class, strategy_name, params_json, datetime.now().isoformat()
+			ticker, asset_class, strategy_name, params_json, is_active, datetime.now().isoformat()
 		))
 		conn.commit()
-		logger.info(f"Saved best parameters for {ticker}")
+		logger.info(f"Saved best parameters for {ticker} ({asset_class}): is_active={is_active}")
 
 	except Exception as e:
 		logger.error(f"Failed to save best parameters: {e}")
