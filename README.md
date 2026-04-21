@@ -24,7 +24,29 @@ main.py
 
 - **api.py**: Alpaca API wrapper providing access to account info, market data, and order management
 - **brain.py**: Gemini-based decision engine that analyzes context and returns JSON decisions
+- **database.py**: SQLite database manager for storing parameters, trades, and performance metrics
 - **main.py**: Main bot loop that polls every 5 minutes, gathers data, and executes trades
+
+## Database
+
+The bot uses SQLite (`ai-trader.db`) to persist data with the following tables:
+
+- **best_parameters**: Stores optimized strategy parameters for active tickers (active=1 required)
+- **trade_log**: Records all AI decisions, confidence levels, and executed trades
+- **daily_performance**: Aggregates daily PnL and trade statistics
+- **account_metrics**: Tracks historical equity, cash, and buying power snapshots
+- **tickers**: Tracks which tickers are active and available for trading
+
+### Loading SOL/USD Parameters
+
+The bot loads best parameters for SOL/USD from the `best_parameters` table. Parameters are only loaded for active tickers (where `active = 1` in the tickers table).
+
+```python
+from database import setup_database, get_best_parameters
+
+setup_database()  # Initialize database
+params = get_best_parameters("SOL/USD")  # Load SOL/USD parameters
+```
 
 ## Setup
 
