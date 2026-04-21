@@ -92,11 +92,36 @@ The bot will:
 
 ## Current Configuration
 
-- **Trading Pair**: SOL/USD (Solana)
-- **Poll Interval**: 5 minutes
+- **Trading Pairs**: All active tickers from database (SOL/USD by default)
+- **Active Ticker Requirement**: `active = 1` in tickers table
+- **Poll Interval**: 5 minutes (evaluates all active tickers per cycle)
 - **Technical Data**: 15-minute bars with SMA(5) and SMA(10)
 - **Confidence Threshold**: 75% for order execution
 - **Order Type**: Good-Till-Canceled (GTC) for crypto
+
+## Managing Tickers
+
+The bot evaluates all active tickers from the database. To add or remove tickers:
+
+```python
+from database import setup_database, get_active_tickers
+
+# View all active tickers
+active = get_active_tickers()  # Returns list of ticker symbols
+
+# To add a ticker to database
+conn = get_db_connection()
+conn.execute("INSERT OR IGNORE INTO tickers (ticker, active, insert_date, last_update) VALUES (?, 1, ?, ?)", 
+             ("BTC/USD", datetime.now().isoformat(), datetime.now().isoformat()))
+conn.commit()
+conn.close()
+
+# To deactivate a ticker
+conn = get_db_connection()
+conn.execute("UPDATE tickers SET active = 0 WHERE ticker = ?", ("BTC/USD",))
+conn.commit()
+conn.close()
+```
 
 ## Testing
 
