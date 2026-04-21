@@ -304,6 +304,48 @@ def get_today_trades(ticker="SOL/USD"):
 		conn.close()
 
 
+def get_best_parameters_json(ticker, asset_class):
+	"""
+	Retrieves best parameters as raw JSON string (unparsed).
+
+	Args:
+		ticker: Ticker symbol (e.g., 'SOL/USD')
+		asset_class: Asset class (e.g., 'STOCK', 'CRYPTO')
+
+	Returns:
+		Tuple of (ticker, strategy_name, parameters_json) or None if not found.
+	"""
+	conn = get_db_connection()
+	cursor = conn.cursor()
+
+	try:
+		query = """
+			SELECT ticker, strategy_name, parameters
+			FROM best_parameters
+			WHERE asset_class = ? AND is_active = 1 AND ticker = ?
+		"""
+		result = cursor.execute(query, (asset_class, ticker)).fetchone()
+
+		if result:
+			ticker_val, strategy_name, params_json = result
+			logger.info(f"Retrieved JSON parameters for {ticker_val} ({asset_class})")
+			return {
+				'ticker': ticker_val,
+				'strategy_name': strategy_name,
+				'parameters': params_json,
+				'parameters_dict': json.loads(params_json) if params_json else {}
+			}
+
+		logger.warning(f"No parameters found for {ticker} ({asset_class})")
+		return None
+
+	except Exception as e:
+		logger.error(f"Error fetching parameters JSON: {e}")
+		return None
+	finally:
+		conn.close()
+
+
 def save_best_parameters(ticker, parameters, asset_class='crypto', strategy_name='ai_trader_gemini', is_active=1):
 	"""
 	Saves or updates the best parameters for a ticker.
