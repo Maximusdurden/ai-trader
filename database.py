@@ -111,6 +111,7 @@ def setup_database():
 def get_best_parameters(ticker="SOL/USD"):
 	"""
 	Retrieves the best parameters for a given ticker from the best_parameters table.
+	Only returns parameters for active tickers (active = 1).
 	Returns a dictionary with parameters, or None if not found.
 	"""
 	conn = get_db_connection()
@@ -118,10 +119,11 @@ def get_best_parameters(ticker="SOL/USD"):
 
 	try:
 		query = """
-			SELECT ticker, asset_class, fast_ema, slow_ema, trailing_stop,
-					strategy_name, parameters, last_updated
-			FROM best_parameters
-			WHERE ticker = ?
+			SELECT bp.ticker, bp.asset_class, bp.fast_ema, bp.slow_ema, bp.trailing_stop,
+					bp.strategy_name, bp.parameters, bp.last_updated
+			FROM best_parameters bp
+			JOIN tickers t ON bp.ticker = t.ticker
+			WHERE t.active = 1 AND bp.ticker = ?
 		"""
 		result = cursor.execute(query, (ticker,)).fetchone()
 
