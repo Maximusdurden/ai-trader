@@ -386,6 +386,25 @@ def save_best_parameters(ticker, parameters, asset_class='crypto', strategy_name
 		conn.close()
 
 
+def get_active_tickers():
+	"""Retrieves all active tickers from the tickers table."""
+	conn = get_db_connection()
+	cursor = conn.cursor()
+
+	try:
+		query = "SELECT ticker FROM tickers WHERE active = 1 ORDER BY ticker ASC"
+		results = cursor.execute(query).fetchall()
+		tickers = [row[0] for row in results]
+		logger.info(f"Retrieved {len(tickers)} active tickers: {tickers}")
+		return tickers
+
+	except Exception as e:
+		logger.error(f"Error fetching active tickers: {e}")
+		return []
+	finally:
+		conn.close()
+
+
 if __name__ == "__main__":
 	setup_database()
 	params = get_best_parameters("SOL/USD")
