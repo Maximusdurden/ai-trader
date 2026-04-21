@@ -10,7 +10,7 @@ from api import (
     get_latest_news
 )
 from brain import evaluate_asset
-from database import setup_database, get_active_tickers
+from database import setup_database, get_active_tickers, get_best_parameters_json
 from alpaca.trading.enums import OrderSide, TimeInForce
 
 # Setup logging
@@ -20,23 +20,33 @@ logger = logging.getLogger(__name__)
 # Config
 POLL_INTERVAL = 300 # 5 minutes
 
-def get_technicals(df):
-    """Simple technical analysis."""
+def get_technicals(df, fast_period=5, slow_period=10):
+    """Calculate technical indicators based on EMA periods.
+
+    Args:
+        df: DataFrame with OHLCV data
+        fast_period: Fast EMA period (default 5)
+        slow_period: Slow EMA period (default 10)
+    """
     if df is None or df.empty:
         return ""
-    
-    # Simple Moving Averages
-    df['SMA_5'] = df['close'].rolling(window=5).mean()
-    df['SMA_10'] = df['close'].rolling(window=10).mean()
-    
+
+    # Calculate Exponential Moving Averages
+    df['EMA_fast'] = df['close'].ewm(span=fast_period, adjust=False).mean()
+    df['EMA_slow'] = df['close'].ewm(span=slow_period, adjust=False).mean()
+
     latest = df.iloc[-1]
     prev = df.iloc[-2] if len(df) > 1 else latest
-    
+
+    price_change = ((latest['close'] - prev['close']) / prev['close'] * 100) if prev['close'] != 0 else 0
+    ema_signal = "BULLISH" if latest['EMA_fast'] > latest['EMA_slow'] else "BEARISH"
+
     tech_str = f"""
     Latest Price: {latest['close']:.2f}
-    SMA_5: {latest['SMA_5']:.2f}
-    SMA_10: {latest['SMA_10']:.2f}
-    Price Change (1 period): {((latest['close'] - prev['close']) / prev['close'] * 100):.2f}%
+    EMA({fast_period}): {latest['EMA_fast']:.2f}
+    EMA({slow_period}): {latest['EMA_slow']:.2f}
+    EMA Signal: {ema_signal}
+    Price Change (1 period): {price_change:.2f}%
     """
     return tech_str
 
@@ -44,6 +54,22 @@ def evaluate_ticker(trading_client, ticker):
     """Evaluates a single ticker and executes trades if conditions are met."""
     try:
         logger.info(f"--- Evaluating {ticker} ---")
+
+        # 0. Load Ticker Parameters
+        params = get_best_parameters_json(ticker, "CRYPTO")
+        if not params:
+            logger.warning(f"No parameters found for {ticker}. Using defaults.")
+            fast_ema = 12
+            slow_ema = 26
+            trailing_stop = 2.0
+            strategy_name = "default"
+        else:
+            params_dict = params.get('parameters_dict', {})
+            fast_ema = params_dict.get('fast_ema', 12)
+            slow_ema = params_dict.get('slow_ema', 26)
+            trailing_stop = params_dict.get('trailing_stop', 2.0)
+            strategy_name = params.get('strategy_name', 'ai_trader_gemini')
+            logger.info(f"Loaded parameters for {ticker}: EMA({fast_ema},{slow_ema}), Stop={trailing_stop}%")
 
         # 1. Account Info
         cash = get_available_cash(trading_client)
@@ -61,19 +87,25 @@ def evaluate_ticker(trading_client, ticker):
 
         logger.info(pos_status)
 
-        # 3. Market Data & Technicals
+        # 3. Market Data & Technicals (using ticker-specific parameters)
         bars = get_historical_bars([ticker], "15Min", days_ago=1)
         tech_context = ""
         if ticker in bars and not bars[ticker].empty:
-            tech_context = get_technicals(bars[ticker])
+            tech_context = get_technicals(bars[ticker], fast_period=fast_ema, slow_period=slow_ema)
 
         # 4. News
         news = get_latest_news([ticker], limit=3)
         news_context = "\n".join([f"- {n.created_at}: {n.headline} ({n.summary[:100]}...)" for n in news])
 
-        # 5. Compile Full Context
+        # 5. Compile Full Context (including strategy parameters)
         full_context = f"""
         TICKER: {ticker}
+        STRATEGY: {strategy_name}
+        STRATEGY PARAMETERS:
+        - EMA Fast Period: {fast_ema}
+        - EMA Slow Period: {slow_ema}
+        - Trailing Stop: {trailing_stop}%
+
         CURRENT STATUS: {pos_status}
         CASH AVAILABLE: ${cash:.2f}
 
@@ -89,7 +121,7 @@ def evaluate_ticker(trading_client, ticker):
         logger.info(f"Gemini Decision: {decision['action']} (Confidence: {decision['confidence']}%)")
         logger.info(f"Reasoning: {decision['reasoning']}")
 
-        # 7. Execute Decision
+        # 7. Execute Decision (using ticker-specific parameters)
         if decision['action'] == 'BUY' and decision['confidence'] > 75:
             amount_to_spend = cash * (decision['allocation_pct'] / 100)
             if amount_to_spend > 10:
@@ -97,6 +129,7 @@ def evaluate_ticker(trading_client, ticker):
                 price = latest_quote[ticker].ask_price
                 qty = amount_to_spend / price
                 logger.info(f"EXECUTING BUY: {qty:.4f} units of {ticker} at ~${price}")
+                logger.info(f"Trailing stop configured: {trailing_stop}%")
                 try:
                     place_order(trading_client, ticker, OrderSide.BUY, qty, None, time_in_force=TimeInForce.GTC)
                 except Exception as e:
