@@ -165,16 +165,16 @@ python startup.py
 ```
 
 This will:
-- ✅ Start the trading bot (`main_hybrid.py`)
-- ✅ Start the web dashboard at `http://localhost:5000`
-- ✅ Monitor both services and handle graceful shutdown (Ctrl+C)
+- Start the trading bot (`main_hybrid.py`)
+- Start the web dashboard at `http://localhost:5000`
+- Monitor both services and handle graceful shutdown (Ctrl+C)
 
 Open your browser to **http://localhost:5000** to see live trading activity:
-- 📊 Account equity and daily PnL
-- 💰 Open positions with live profit/loss
-- 📈 Today's trades and execution details
-- 🎯 Active tickers being monitored
-- 📋 Historical trade statistics
+- Account equity and daily PnL
+- Open positions with live profit/loss
+- Today's trades and execution details
+- Active tickers being monitored
+- Historical trade statistics
 
 ### Advanced Usage
 
@@ -213,7 +213,7 @@ The bot uses **event-driven architecture** instead of polling:
 Example trigger sequence:
 ```
 15:30:45 - EMA crossover detected for SOL/USD (BULLISH)
-15:30:45 - Last decision was 5+ minutes ago ✓ (respects decision_interval)
+15:30:45 - Last decision was 5+ minutes ago [OK] (respects decision_interval)
 15:30:46 - Call Gemini with: EMA signals, position status, news, account metrics
 15:30:48 - Gemini responds: BUY, 85% confidence, market order, 2% trailing stop
 15:30:48 - Execute: Buy 0.5 SOL/USD at market price
