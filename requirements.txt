@@ -5,5 +5,4 @@ pandas
 pytz
 flask
 flask-cors
-google-cloud-storage
 requests

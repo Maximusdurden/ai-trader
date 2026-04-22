@@ -8,34 +8,7 @@ import pytz
 import pandas as pd
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from google.cloud import storage
 
-def get_gcp_storage_client():
-    """Initializes and returns a GCP Storage client using the local key."""
-    # Locates the key in the config folder relative to the project root
-    key_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "gcp-key.json")
-    if os.path.exists(key_path):
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
-        return storage.Client()
-    else:
-        logger.error(f"GCP Key not found at {key_path}")
-        return None
-
-def upload_to_gcs(bucket_name, source_file_path, destination_blob_name):
-    """Uploads a file to the specified GCP bucket."""
-    client = get_gcp_storage_client()
-    if not client:
-        return False
-    
-    try:
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(destination_blob_name)
-        blob.upload_from_filename(source_file_path)
-        return True
-    except Exception as e:
-        logger.error(f"Failed to upload {source_file_path} to GCS: {e}")
-        return False
-    
 # Alpaca Imports
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
