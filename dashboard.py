@@ -164,24 +164,58 @@ def get_active_tickers():
 		# Get latest prices
 		if tickers:
 			try:
-				quotes = get_latest_crypto_data(tickers)
+				# Separate crypto and stock tickers for appropriate API calls
+				crypto_tickers = [t for t in tickers if '/' in t]
+				stock_tickers = [t for t in tickers if '/' not in t]
+				quotes = {}
+
+				if crypto_tickers:
+					crypto_quotes = get_latest_crypto_data(crypto_tickers)
+					quotes.update(crypto_quotes)
+
+				# Stock tickers would need a different API - for now just return 0 price
+				for stock in stock_tickers:
+					quotes[stock] = None
+
 				for ticker in tickers:
-					quote = quotes.get(ticker, {})
-					params = get_best_parameters_json(ticker, 'CRYPTO')
+					quote = quotes.get(ticker)
+					price = 0
+					if quote and hasattr(quote, 'ask_price'):
+						price = float(quote.ask_price)
+
+					# Get strategy directly from database
+					conn = get_db_connection()
+					cursor = conn.cursor()
+					result = cursor.execute(
+						"SELECT strategy_name FROM best_parameters WHERE ticker = ? AND is_active = 1",
+						(ticker,)
+					).fetchone()
+					conn.close()
+
+					strategy = result[0] if result else 'unknown'
 
 					ticker_status.append({
 						'ticker': ticker,
-						'price': float(quote.ask_price) if hasattr(quote, 'ask_price') else 0,
-						'strategy': params.get('strategy_name', 'unknown') if params else 'unknown',
+						'price': price,
+						'strategy': strategy,
 						'status': 'active'
 					})
 			except Exception as e:
 				logger.error(f"Error fetching quotes: {e}")
 				for ticker in tickers:
+					conn = get_db_connection()
+					cursor = conn.cursor()
+					result = cursor.execute(
+						"SELECT strategy_name FROM best_parameters WHERE ticker = ? AND is_active = 1",
+						(ticker,)
+					).fetchone()
+					conn.close()
+					strategy = result[0] if result else 'unknown'
+
 					ticker_status.append({
 						'ticker': ticker,
 						'price': 0,
-						'strategy': 'unknown',
+						'strategy': strategy,
 						'status': 'error'
 					})
 
