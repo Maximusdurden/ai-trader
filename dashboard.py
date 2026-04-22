@@ -10,7 +10,7 @@ from core.database import (
 	get_tickers_from_best_parameters,
 	get_best_parameters_json
 )
-from core.api import get_trading_client, get_available_cash, get_latest_crypto_data
+from core.api import get_trading_client, get_available_cash, get_latest_crypto_data, get_latest_market_data
 
 app = Flask(__name__)
 CORS(app)
@@ -170,18 +170,27 @@ def get_active_tickers():
 				quotes = {}
 
 				if crypto_tickers:
-					crypto_quotes = get_latest_crypto_data(crypto_tickers)
-					quotes.update(crypto_quotes)
+					try:
+						crypto_quotes = get_latest_crypto_data(crypto_tickers)
+						quotes.update(crypto_quotes)
+					except Exception as e:
+						logger.warning(f"Error fetching crypto quotes: {e}")
 
-				# Stock tickers would need a different API - for now just return 0 price
-				for stock in stock_tickers:
-					quotes[stock] = None
+				if stock_tickers:
+					try:
+						stock_quotes = get_latest_market_data(stock_tickers)
+						quotes.update(stock_quotes)
+					except Exception as e:
+						logger.warning(f"Error fetching stock quotes: {e}")
 
 				for ticker in tickers:
 					quote = quotes.get(ticker)
 					price = 0
-					if quote and hasattr(quote, 'ask_price'):
-						price = float(quote.ask_price)
+					if quote:
+						if hasattr(quote, 'ask_price'):
+							price = float(quote.ask_price)
+						elif hasattr(quote, 'close'):
+							price = float(quote.close)
 
 					# Get strategy directly from database
 					conn = get_db_connection()
@@ -236,7 +245,7 @@ def get_agent_reasoning():
 			FROM trade_log
 			WHERE reasoning IS NOT NULL AND reasoning != ''
 			ORDER BY timestamp DESC
-			LIMIT 30
+			LIMIT 100
 		"""
 		rows = cursor.execute(query).fetchall()
 
