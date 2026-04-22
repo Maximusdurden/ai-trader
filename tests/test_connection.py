@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 def test_connection():
 	"""Test Alpaca and Gemini API connections."""
 	print("\n" + "="*60)
-	print("🔍 AI TRADER CONNECTION TEST")
+	print("[*] AI TRADER CONNECTION TEST")
 	print("="*60 + "\n")
 
 	# Test Alpaca connection
@@ -20,14 +20,14 @@ def test_connection():
 		logger.info("[1/3] Testing Alpaca connection...")
 		client = get_trading_client(paper_trading=True)
 		account = client.get_account()
-		print(f"✅ Connected to Alpaca!")
+		print(f"[OK] Connected to Alpaca!")
 		print(f"   Account ID: {account.id}")
 		print(f"   Status: {account.status}")
 		print(f"   Equity: ${float(account.equity):.2f}")
 		print(f"   Cash: ${float(account.cash):.2f}")
 		print(f"   Buying Power: ${float(account.buying_power):.2f}\n")
 	except Exception as e:
-		print(f"❌ Alpaca connection failed: {e}\n")
+		print(f"[ERR] Alpaca connection failed: {e}\n")
 		return False
 
 	# Test Gemini connection
@@ -39,16 +39,16 @@ def test_connection():
 			"ema_crossover",
 			{"fast_ema": 12, "slow_ema": 26}
 		)
-		print(f"✅ Gemini API responsive!")
+		print(f"[OK] Gemini API responsive!")
 		print(f"   Action: {decision.get('action')}")
 		print(f"   Confidence: {decision.get('confidence')}%")
 		print(f"   Reasoning: {decision.get('reasoning')[:60]}...\n")
 	except Exception as e:
-		print(f"❌ Gemini API failed: {e}\n")
+		print(f"[ERR] Gemini API failed: {e}\n")
 		return False
 
 	print("="*60)
-	print("✅ ALL CONNECTIONS OK - Ready to run startup.py!")
+	print("[OK] ALL CONNECTIONS OK - Ready to run startup.py!")
 	print("="*60 + "\n")
 	return True
 

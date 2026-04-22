@@ -448,20 +448,23 @@
 		function updateMetrics(metrics) {
 			if (!metrics) return;
 
-			document.getElementById('equity').textContent = formatCurrency(metrics.equity);
-			document.getElementById('cash').textContent = formatCurrency(metrics.cash);
-			document.getElementById('buyingPower').textContent = formatCurrency(metrics.buying_power);
+			document.getElementById('equity').textContent = formatCurrency(metrics.equity || 0);
+			document.getElementById('cash').textContent = formatCurrency(metrics.cash || 0);
+			document.getElementById('buyingPower').textContent = formatCurrency(metrics.buying_power || 0);
 
 			const plElement = document.getElementById('dailyPL');
 			const plPctElement = document.getElementById('dailyPLPct');
 
-			plElement.textContent = formatCurrency(metrics.daily_pl);
-			plPctElement.textContent = metrics.daily_pl_pct.toFixed(2) + '%';
+			const dailyPL = metrics.daily_pl || 0;
+			const dailyPLPct = (metrics.daily_pl_pct || 0);
+
+			plElement.textContent = formatCurrency(dailyPL);
+			plPctElement.textContent = (dailyPLPct).toFixed(2) + '%';
 
 			plElement.className = 'large-metric';
 			plPctElement.className = 'metric-value';
 
-			if (metrics.daily_pl >= 0) {
+			if (dailyPL >= 0) {
 				plElement.classList.add('positive');
 				plPctElement.classList.add('positive');
 			} else {
@@ -540,16 +543,19 @@
 		}
 
 		function updateStats(stats) {
+			if (!stats) stats = {};
 			document.getElementById('totalTrades').textContent = stats.total_trades || 0;
 
 			const winRate = document.getElementById('winRate');
-			winRate.textContent = (stats.win_rate || 0).toFixed(1) + '%';
+			const wr = stats.win_rate || 0;
+			winRate.textContent = (wr).toFixed(1) + '%';
 			winRate.className = 'metric-value';
-			if (stats.win_rate > 50) winRate.classList.add('positive');
-			else if (stats.win_rate < 50 && stats.win_rate > 0) winRate.classList.add('negative');
+			if (wr > 50) winRate.classList.add('positive');
+			else if (wr < 50 && wr > 0) winRate.classList.add('negative');
 			else winRate.classList.add('neutral');
 
-			document.getElementById('avgConfidence').textContent = (stats.avg_confidence || 0).toFixed(0) + '%';
+			const ac = stats.avg_confidence || 0;
+			document.getElementById('avgConfidence').textContent = (ac).toFixed(0) + '%';
 		}
 
 		function updateTickers(tickers) {
