@@ -187,9 +187,11 @@ def get_active_tickers():
 					quote = quotes.get(ticker)
 					price = 0
 					if quote:
-						if hasattr(quote, 'ask_price'):
+						if hasattr(quote, 'ask_price') and quote.ask_price > 0:
 							price = float(quote.ask_price)
-						elif hasattr(quote, 'close'):
+						elif hasattr(quote, 'bid_price') and quote.bid_price > 0:
+							price = float(quote.bid_price)
+						elif hasattr(quote, 'close') and quote.close > 0:
 							price = float(quote.close)
 
 					# Get strategy directly from database
