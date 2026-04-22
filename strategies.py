@@ -81,15 +81,32 @@ class StrategyExecutor:
 	def generate_execution_plan(self, decision, current_position, cash, indicators=None):
 		"""
 		Generate API execution plan based on:
-		- Gemini decision (action, confidence, allocation)
-		- Strategy parameters (trailing stop, position sizing, etc.)
+		- Gemini decision (action, confidence, allocation, + new execution fields)
+		- Strategy parameters (trailing stop, position sizing, etc. — database defaults)
 		- Current market state (position, price, indicators)
+
+		Gemini's execution fields override database defaults when not null:
+		- order_type: market|limit|trailing_stop|stop_limit (overrides default)
+		- trail_percent: trailing stop % (overrides stored trailing_stop)
+		- take_profit_percent: take profit level (overrides stored value)
+		- limit_price_offset: % offset for limit orders
 
 		Returns dict with execution instructions for apply_execution_plan()
 		"""
 		action = decision.get('action', 'HOLD')
 		confidence = decision.get('confidence', 0)
 		allocation_pct = decision.get('allocation_pct', 50)
+
+		# Get execution overrides from Gemini (can be None)
+		gemini_order_type = decision.get('order_type')
+		gemini_trail_percent = decision.get('trail_percent')
+		gemini_take_profit = decision.get('take_profit_percent')
+		gemini_limit_offset = decision.get('limit_price_offset')
+
+		# Merge: Gemini overrides DB defaults
+		order_type = gemini_order_type or 'market'
+		trail_percent = gemini_trail_percent if gemini_trail_percent is not None else self.trailing_stop
+		take_profit = gemini_take_profit if gemini_take_profit is not None else self.take_profit_percent
 
 		if action == 'BUY' and confidence > 75:
 			# Calculate position size based on strategy parameters
@@ -98,14 +115,22 @@ class StrategyExecutor:
 			return {
 				'action': 'BUY',
 				'amount': amount,
-				'trailing_stop_percent': self.trailing_stop,
-				'take_profit_percent': self.take_profit_percent,
+				'order_type': order_type,
+				'trail_percent': trail_percent,
+				'take_profit_percent': take_profit,
+				'limit_price_offset': gemini_limit_offset,
 				'strategy': self.strategy_name,
+				'gemini_overrides': {
+					'order_type': gemini_order_type,
+					'trail_percent': gemini_trail_percent,
+					'take_profit_percent': gemini_take_profit
+				},
 				'parameters_used': {
 					'fast_ema': self.fast_ema,
 					'slow_ema': self.slow_ema,
-					'trailing_stop': self.trailing_stop,
-					'allocation': allocation_pct
+					'trailing_stop': trail_percent,
+					'allocation': allocation_pct,
+					'order_type': order_type
 				}
 			}
 
@@ -115,9 +140,14 @@ class StrategyExecutor:
 			return {
 				'action': 'SELL',
 				'quantity': qty_to_sell,
+				'order_type': order_type,
 				'strategy': self.strategy_name,
+				'gemini_overrides': {
+					'order_type': gemini_order_type
+				},
 				'parameters_used': {
-					'allocation': allocation_pct
+					'allocation': allocation_pct,
+					'order_type': order_type
 				}
 			}
 
@@ -228,9 +258,14 @@ def get_strategy_executor(strategy_name, parameters):
 def apply_execution_plan(trading_client, ticker, execution_plan):
 	"""
 	Execute the plan by calling appropriate api.py functions.
-	Different strategies and parameters lead to different API interactions.
+	Routes to different API calls based on order_type:
+	- market: place_order() without limit
+	- trailing_stop: submit_trailing_stop_order()
+	- stop_limit: submit_stop_limit_order()
+	- limit: place_order() with limit price
 	"""
 	action = execution_plan.get('action', 'HOLD')
+	order_type = execution_plan.get('order_type', 'market')
 
 	try:
 		if action == 'HOLD':
@@ -240,7 +275,8 @@ def apply_execution_plan(trading_client, ticker, execution_plan):
 		elif action == 'BUY':
 			from api import get_latest_crypto_data
 			amount = execution_plan.get('amount')
-			trailing_stop = execution_plan.get('trailing_stop_percent')
+			trail_percent = execution_plan.get('trail_percent')
+			limit_offset = execution_plan.get('limit_price_offset')
 
 			latest_quote = get_latest_crypto_data([ticker])
 			price = latest_quote[ticker].ask_price
@@ -248,10 +284,27 @@ def apply_execution_plan(trading_client, ticker, execution_plan):
 
 			logger.info(f"BUY {ticker}: {qty:.4f} units @ ${price:.2f}")
 			logger.info(f"  Strategy: {execution_plan.get('strategy')}")
-			logger.info(f"  Trailing Stop: {trailing_stop}%")
+			logger.info(f"  Order Type: {order_type}")
+			logger.info(f"  Trailing Stop: {trail_percent}%")
+			logger.info(f"  Gemini Overrides: {execution_plan.get('gemini_overrides')}")
 			logger.info(f"  Parameters: {execution_plan.get('parameters_used')}")
 
-			place_order(trading_client, ticker, OrderSide.BUY, qty, None)
+			# Route to appropriate API call based on order type
+			if order_type == 'trailing_stop':
+				from api import submit_trailing_stop_order
+				submit_trailing_stop_order(trading_client, ticker, qty, OrderSide.BUY, trail_percent / 100)
+			elif order_type == 'limit':
+				limit_price = price * (1 + (limit_offset or 0) / 100) if limit_offset else price
+				place_order(trading_client, ticker, OrderSide.BUY, qty, limit_price)
+			elif order_type == 'stop_limit':
+				stop_price = price * (1 - (trail_percent or 2.0) / 100)
+				limit_price = stop_price * 0.99
+				from api import submit_stop_limit_order
+				submit_stop_limit_order(trading_client, ticker, qty, OrderSide.BUY, stop_price, limit_price)
+			else:
+				# Default: market order
+				place_order(trading_client, ticker, OrderSide.BUY, qty, None)
+
 			return True
 
 		elif action == 'SELL':
@@ -263,9 +316,19 @@ def apply_execution_plan(trading_client, ticker, execution_plan):
 
 			logger.info(f"SELL {ticker}: {qty:.4f} units @ ${price:.2f}")
 			logger.info(f"  Strategy: {execution_plan.get('strategy')}")
+			logger.info(f"  Order Type: {order_type}")
+			logger.info(f"  Gemini Overrides: {execution_plan.get('gemini_overrides')}")
 			logger.info(f"  Parameters: {execution_plan.get('parameters_used')}")
 
-			place_order(trading_client, ticker, OrderSide.SELL, qty, None)
+			# Route to appropriate API call
+			if order_type == 'limit':
+				limit_offset = execution_plan.get('limit_price_offset')
+				limit_price = price * (1 - (limit_offset or 0) / 100) if limit_offset else price
+				place_order(trading_client, ticker, OrderSide.SELL, qty, limit_price)
+			else:
+				# Default: market order
+				place_order(trading_client, ticker, OrderSide.SELL, qty, None)
+
 			return True
 
 		elif action in ['GRID_BUY', 'GRID_SELL']:

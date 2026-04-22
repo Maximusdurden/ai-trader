@@ -405,6 +405,29 @@ def get_active_tickers():
 		conn.close()
 
 
+def get_tickers_from_best_parameters():
+	"""Retrieves all tickers from best_parameters where is_active = 1.
+
+	This is the source of truth for which tickers the bot should run.
+	Only tickers with active parameters are evaluated.
+	"""
+	conn = get_db_connection()
+	cursor = conn.cursor()
+
+	try:
+		query = "SELECT DISTINCT ticker FROM best_parameters WHERE is_active = 1 ORDER BY ticker ASC"
+		results = cursor.execute(query).fetchall()
+		tickers = [row[0] for row in results]
+		logger.info(f"Retrieved {len(tickers)} tickers with active parameters: {tickers}")
+		return tickers
+
+	except Exception as e:
+		logger.error(f"Error fetching tickers from best_parameters: {e}")
+		return []
+	finally:
+		conn.close()
+
+
 if __name__ == "__main__":
 	setup_database()
 	params = get_best_parameters("SOL/USD")

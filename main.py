@@ -10,7 +10,7 @@ from api import (
     get_latest_news
 )
 from brain import evaluate_asset
-from database import setup_database, get_active_tickers, get_best_parameters_json
+from database import setup_database, get_tickers_from_best_parameters, get_best_parameters_json
 from strategies import get_strategy_executor, apply_execution_plan
 from alpaca.trading.enums import OrderSide, TimeInForce
 
@@ -91,8 +91,24 @@ def evaluate_ticker(trading_client, ticker):
         # 3. Market Data & Technicals (using ticker-specific parameters)
         bars = get_historical_bars([ticker], "15Min", days_ago=1)
         tech_context = ""
+        indicators = {}
         if ticker in bars and not bars[ticker].empty:
-            tech_context = get_technicals(bars[ticker], fast_period=fast_ema, slow_period=slow_ema)
+            df = bars[ticker]
+            tech_context = get_technicals(df, fast_period=fast_ema, slow_period=slow_ema)
+
+            # Extract indicator values for executor
+            latest = df.iloc[-1]
+            ema_fast = latest['EMA_fast']
+            ema_slow = latest['EMA_slow']
+            ema_signal = "BULLISH" if ema_fast > ema_slow else "BEARISH"
+            price_change = ((latest['close'] - df.iloc[-2]['close']) / df.iloc[-2]['close'] * 100) if len(df) > 1 else 0
+
+            indicators = {
+                'ema_fast': ema_fast,
+                'ema_slow': ema_slow,
+                'ema_signal': ema_signal,
+                'price_change_pct': price_change
+            }
 
         # 4. News
         news = get_latest_news([ticker], limit=3)
@@ -117,12 +133,19 @@ def evaluate_ticker(trading_client, ticker):
         {news_context}
         """
 
-        # 6. Ask Gemini
-        decision = evaluate_asset(ticker, full_context)
+        # 6. Ask Gemini (with expanded schema for free-style execution)
+        decision = evaluate_asset(ticker, full_context, strategy_name, {
+            'fast_ema': fast_ema,
+            'slow_ema': slow_ema,
+            'trailing_stop': trailing_stop,
+            'strategy_type': 'long_only'
+        })
         logger.info(f"Gemini Decision: {decision['action']} (Confidence: {decision['confidence']}%)")
+        logger.info(f"  Order Type: {decision.get('order_type', 'default (market)')}")
+        logger.info(f"  Override Trail: {decision.get('trail_percent')}%")
         logger.info(f"Reasoning: {decision['reasoning']}")
 
-        # 7. Get strategy executor and generate execution plan
+        # 7. Get strategy executor and generate execution plan (merges DB defaults + Gemini overrides)
         executor = get_strategy_executor(strategy_name, {
             'fast_ema': fast_ema,
             'slow_ema': slow_ema,
@@ -130,7 +153,7 @@ def evaluate_ticker(trading_client, ticker):
             'trend_ema_period': 200
         })
 
-        execution_plan = executor.generate_execution_plan(decision, current_position, cash)
+        execution_plan = executor.generate_execution_plan(decision, current_position, cash, indicators)
         logger.info(f"Execution plan: {execution_plan}")
 
         # 8. Apply Execution Plan (interact with API based on strategy)
@@ -141,17 +164,17 @@ def evaluate_ticker(trading_client, ticker):
 
 
 def run_bot():
-    """Main bot loop that evaluates all active tickers."""
+    """Main bot loop that evaluates all active tickers from best_parameters."""
     setup_database()
     trading_client = get_trading_client(paper_trading=True)
 
     while True:
         try:
-            # Get all active tickers
-            active_tickers = get_active_tickers()
+            # Get all tickers with active parameters (source of truth is best_parameters.is_active = 1)
+            active_tickers = get_tickers_from_best_parameters()
 
             if not active_tickers:
-                logger.warning("No active tickers found. Sleeping...")
+                logger.warning("No tickers with active parameters found in best_parameters table. Sleeping...")
                 time.sleep(POLL_INTERVAL)
                 continue
 
