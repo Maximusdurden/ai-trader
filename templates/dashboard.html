@@ -403,6 +403,14 @@
 			</div>
 		</div>
 
+		<!-- Recent News -->
+		<div class="section">
+			<div class="section-title">📰 Recent News (Triggered Decisions)</div>
+			<div id="newsContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;">
+				<div class="loading">Loading news...</div>
+			</div>
+		</div>
+
 		<!-- Recent Trades -->
 		<div class="section">
 			<div class="section-title">📈 Today's Trades</div>
@@ -433,6 +441,7 @@
 			updateStats(data.stats);
 			updateTickers(data.active_tickers);
 			updateTradedTickers(data.traded_tickers);
+			updateNews(data.recent_news);
 			updateTimestamp(data.timestamp);
 		}
 
@@ -587,6 +596,34 @@
 					</div>
 				</div>
 			`).join('');
+		}
+
+		function updateNews(newsItems) {
+			const container = document.getElementById('newsContainer');
+			if (!newsItems || newsItems.length === 0) {
+				container.innerHTML = '<div class="loading">No breaking news triggered yet</div>';
+				return;
+			}
+
+			container.innerHTML = newsItems.map(item => {
+				const time = new Date(item.timestamp).toLocaleTimeString();
+				return `
+					<div class="card" style="padding: 15px; border-left: 4px solid #ff9800;">
+						<div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
+							<div class="ticker-name">${item.ticker}</div>
+							<span style="font-size: 11px; color: #888;">${time}</span>
+						</div>
+						<div style="background: #1a2540; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
+							<span style="display: inline-block; background: rgba(255, 152, 0, 0.2); color: #ff9800; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600;">
+								${item.trigger_type.replace(/_/g, ' ').toUpperCase()}
+							</span>
+						</div>
+						<div style="font-size: 12px; color: #aaa; line-height: 1.4;">
+							${item.reason}
+						</div>
+					</div>
+				`;
+			}).join('');
 		}
 
 		function updateTimestamp(timestamp) {

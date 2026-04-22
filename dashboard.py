@@ -191,6 +191,38 @@ def get_active_tickers():
 		return []
 
 
+def get_recent_news():
+	"""Get recent market news that triggered decisions."""
+	conn = get_db_connection()
+	cursor = conn.cursor()
+
+	try:
+		query = """
+			SELECT DISTINCT ticker, timestamp, trigger_type, reasoning
+			FROM trade_log
+			WHERE trigger_type = 'breaking_news' AND reasoning IS NOT NULL
+			ORDER BY timestamp DESC
+			LIMIT 10
+		"""
+		rows = cursor.execute(query).fetchall()
+
+		news = []
+		for row in rows:
+			news.append({
+				'ticker': row[0],
+				'timestamp': row[1],
+				'trigger_type': row[2],
+				'reason': row[3][:150] + '...' if len(row[3] or '') > 150 else row[3]
+			})
+
+		return news
+	except Exception as e:
+		logger.error(f"Error fetching recent news: {e}")
+		return []
+	finally:
+		conn.close()
+
+
 def get_all_traded_tickers():
 	"""Get all tickers that have been traded with statistics."""
 	conn = get_db_connection()
@@ -270,6 +302,12 @@ def api_tickers():
 	return jsonify(get_active_tickers())
 
 
+@app.route('/api/news')
+def api_news():
+	"""API endpoint for recent news."""
+	return jsonify(get_recent_news())
+
+
 @app.route('/api/traded-tickers')
 def api_traded_tickers():
 	"""API endpoint for all tickers that have been traded."""
@@ -286,6 +324,7 @@ def api_dashboard():
 		'stats': get_daily_stats(),
 		'active_tickers': get_active_tickers(),
 		'traded_tickers': get_all_traded_tickers(),
+		'recent_news': get_recent_news(),
 		'timestamp': datetime.now().isoformat()
 	})
 
