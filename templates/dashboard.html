@@ -389,9 +389,17 @@
 
 		<!-- Active Tickers -->
 		<div class="section">
-			<div class="section-title">🎯 Active Tickers</div>
+			<div class="section-title">🎯 Active Tickers (Currently Monitored)</div>
 			<div class="ticker-list" id="tickersContainer">
 				<div class="loading">Loading tickers...</div>
+			</div>
+		</div>
+
+		<!-- All Traded Tickers -->
+		<div class="section">
+			<div class="section-title">📋 All Tickers Traded (Historical)</div>
+			<div id="tradedTickersContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
+				<div class="loading">Loading trade history...</div>
 			</div>
 		</div>
 
@@ -423,7 +431,8 @@
 			updatePositions(data.positions);
 			updateTrades(data.trades);
 			updateStats(data.stats);
-			updateTickers(data.tickers);
+			updateTickers(data.active_tickers);
+			updateTradedTickers(data.traded_tickers);
 			updateTimestamp(data.timestamp);
 		}
 
@@ -546,6 +555,36 @@
 					<div class="ticker-name">${ticker.ticker}</div>
 					<div class="ticker-price">\$${ticker.price.toFixed(2)}</div>
 					<div class="ticker-strategy">${ticker.strategy}</div>
+				</div>
+			`).join('');
+		}
+
+		function updateTradedTickers(tickers) {
+			const container = document.getElementById('tradedTickersContainer');
+			if (!tickers || tickers.length === 0) {
+				container.innerHTML = '<div class="loading">No trade history</div>';
+				return;
+			}
+
+			container.innerHTML = tickers.map(ticker => `
+				<div class="card" style="padding: 15px;">
+					<div class="ticker-name" style="margin-bottom: 10px;">${ticker.ticker}</div>
+					<div class="detail-row" style="justify-content: space-between; font-size: 13px; margin: 5px 0;">
+						<span>Total Trades:</span>
+						<span class="neutral">${ticker.total_trades}</span>
+					</div>
+					<div class="detail-row" style="justify-content: space-between; font-size: 13px; margin: 5px 0;">
+						<span>Buys:</span>
+						<span class="positive">${ticker.buy_count}</span>
+					</div>
+					<div class="detail-row" style="justify-content: space-between; font-size: 13px; margin: 5px 0;">
+						<span>Sells:</span>
+						<span class="negative">${ticker.sell_count}</span>
+					</div>
+					<div class="detail-row" style="justify-content: space-between; font-size: 13px; margin: 5px 0;">
+						<span>Avg Confidence:</span>
+						<span class="neutral">${ticker.avg_confidence}%</span>
+					</div>
 				</div>
 			`).join('');
 		}

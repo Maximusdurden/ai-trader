@@ -191,6 +191,49 @@ def get_active_tickers():
 		return []
 
 
+def get_all_traded_tickers():
+	"""Get all tickers that have been traded with statistics."""
+	conn = get_db_connection()
+	cursor = conn.cursor()
+
+	try:
+		query = """
+			SELECT DISTINCT ticker FROM trade_log WHERE action IN ('BUY', 'SELL')
+			ORDER BY ticker ASC
+		"""
+		rows = cursor.execute(query).fetchall()
+		tickers = [row[0] for row in rows]
+
+		ticker_stats = []
+		for ticker in tickers:
+			# Get stats for this ticker
+			stats_query = """
+				SELECT
+					COUNT(*) as total_trades,
+					SUM(CASE WHEN action = 'BUY' THEN 1 ELSE 0 END) as buy_count,
+					SUM(CASE WHEN action = 'SELL' THEN 1 ELSE 0 END) as sell_count,
+					AVG(confidence) as avg_confidence
+				FROM trade_log
+				WHERE ticker = ? AND action IN ('BUY', 'SELL')
+			"""
+			stats = cursor.execute(stats_query, (ticker,)).fetchone()
+
+			ticker_stats.append({
+				'ticker': ticker,
+				'total_trades': stats[0] or 0,
+				'buy_count': stats[1] or 0,
+				'sell_count': stats[2] or 0,
+				'avg_confidence': round(stats[3] or 0, 1)
+			})
+
+		return ticker_stats
+	except Exception as e:
+		logger.error(f"Error fetching traded tickers: {e}")
+		return []
+	finally:
+		conn.close()
+
+
 @app.route('/')
 def dashboard():
 	"""Serve dashboard HTML."""
@@ -227,6 +270,12 @@ def api_tickers():
 	return jsonify(get_active_tickers())
 
 
+@app.route('/api/traded-tickers')
+def api_traded_tickers():
+	"""API endpoint for all tickers that have been traded."""
+	return jsonify(get_all_traded_tickers())
+
+
 @app.route('/api/dashboard')
 def api_dashboard():
 	"""Combined endpoint for all dashboard data."""
@@ -235,7 +284,8 @@ def api_dashboard():
 		'positions': get_positions(),
 		'trades': get_today_trades(),
 		'stats': get_daily_stats(),
-		'tickers': get_active_tickers(),
+		'active_tickers': get_active_tickers(),
+		'traded_tickers': get_all_traded_tickers(),
 		'timestamp': datetime.now().isoformat()
 	})
 
