@@ -3,3 +3,7 @@ python-dotenv
 alpaca-py
 pandas
 pytz
+flask
+flask-cors
+google-cloud-storage
+requests
