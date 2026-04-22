@@ -22,7 +22,7 @@ class TriggerEngine:
 		self.ticker_states = ticker_states
 		self.decision_callback = decision_callback
 
-	def on_bar(self, bar):
+	async def on_bar(self, bar):
 		"""Called when a new bar arrives from CryptoDataStream."""
 		ticker = bar.symbol
 		if ticker not in self.ticker_states:
@@ -50,7 +50,7 @@ class TriggerEngine:
 			self.decision_callback(ticker, state, trigger_type='pnl_threshold')
 			return
 
-	def on_news(self, news):
+	async def on_news(self, news):
 		"""Called when news arrives from NewsDataStream. Always triggers."""
 		ticker = news.symbols[0] if news.symbols else None
 		if not ticker:
@@ -73,7 +73,7 @@ class TriggerEngine:
 		state.record_trigger()
 		self.decision_callback(ticker, state, trigger_type='breaking_news')
 
-	def on_fill(self, fill_event):
+	async def on_fill(self, fill_event):
 		"""Called when order fill arrives from TradingStream."""
 		ticker = fill_event.symbol
 		if ticker not in self.ticker_states:

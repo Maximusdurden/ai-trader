@@ -158,7 +158,9 @@ def run_bot():
 	# Initialize TickerState for each ticker
 	ticker_states = {}
 	for ticker in tickers:
-		params = get_best_parameters_json(ticker, 'CRYPTO')
+		# Determine asset class based on ticker format
+		asset_class = 'CRYPTO' if '/' in ticker else 'STOCK'
+		params = get_best_parameters_json(ticker, asset_class)
 		if params:
 			ticker_states[ticker] = TickerState(ticker, params.get('parameters_dict', params))
 		else:
