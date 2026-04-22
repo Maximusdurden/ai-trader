@@ -5,17 +5,17 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 
-from api import get_trading_client, get_available_cash
-from brain import evaluate_asset
-from database import (
+from core.api import get_trading_client, get_available_cash, get_historical_bars
+from core.brain import evaluate_asset
+from core.database import (
 	setup_database,
 	get_tickers_from_best_parameters,
 	get_best_parameters_json,
 	log_trade_decision
 )
-from strategies import get_strategy_executor, apply_execution_plan
-from ticker_state import TickerState
-from stream_manager import TriggerEngine, start_streams
+from core.strategies import get_strategy_executor, apply_execution_plan
+from core.ticker_state import TickerState
+from core.stream_manager import TriggerEngine, start_streams
 
 # Setup logging
 logging.basicConfig(
@@ -170,7 +170,6 @@ def run_bot():
 
 	# Seed initial bars (one-time REST call to warm up EMAs)
 	logger.info("Seeding initial bar data...")
-	from api import get_historical_bars
 	for ticker in ticker_states:
 		try:
 			bars_df = get_historical_bars([ticker], "15Min", days_ago=2)

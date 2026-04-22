@@ -1,18 +1,19 @@
 ﻿import time
 import logging
 import pandas as pd
-from api import (
+from core.api import (
     get_trading_client,
     get_latest_crypto_data,
     get_historical_bars,
     place_order,
     get_available_cash,
-    get_latest_news
+    get_latest_news,
+    OrderSide,
+    TimeInForce
 )
-from brain import evaluate_asset
-from database import setup_database, get_tickers_from_best_parameters, get_best_parameters_json
-from strategies import get_strategy_executor, apply_execution_plan
-from alpaca.trading.enums import OrderSide, TimeInForce
+from core.brain import evaluate_asset
+from core.database import setup_database, get_tickers_from_best_parameters, get_best_parameters_json
+from core.strategies import get_strategy_executor, apply_execution_plan
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
