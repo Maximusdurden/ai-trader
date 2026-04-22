@@ -5,11 +5,12 @@ An AI-powered cryptocurrency trading bot that uses Google's Gemini API to make i
 ## Features
 
 - **AI-Driven Decisions**: Leverages Google Gemini 2.0 Flash to analyze market data and make trading decisions
-- **Technical Analysis**: Calculates Simple Moving Averages (SMA) on 15-minute bar data
+- **EMA Crossover Signals**: Calculates Exponential Moving Averages (EMA) on 15-minute bar data for trend detection
+- **Per-Ticker Strategy**: Each ticker has its own optimized parameters (fast EMA, slow EMA, trailing stop, strategy type)
 - **News Sentiment**: Incorporates recent news headlines to inform trading decisions
-- **Risk Management**: Monitors account PNL and position sizing before executing orders
+- **Risk Management**: Monitors account PNL, position sizing, and trailing stops before executing orders
 - **Paper Trading**: Safely test strategies using Alpaca's paper trading account
-- **Crypto Trading**: Trades cryptocurrency pairs (e.g., SOL/USD) on Alpaca
+- **Multi-Asset Support**: Trades any asset class available on Alpaca (crypto, stocks, options) — configure per ticker
 
 ## Architecture
 
@@ -161,38 +162,68 @@ Example evaluation cycle for SOL/USD:
 
 The bot cycles through all active tickers and repeats every 5 minutes.
 
-## Current Configuration
+## Per-Ticker Configuration
 
-- **Trading Pairs**: All active tickers from database (SOL/USD by default)
-- **Active Ticker Requirement**: `active = 1` in tickers table
-- **Poll Interval**: 5 minutes (evaluates all active tickers per cycle)
-- **Technical Data**: 15-minute bars with SMA(5) and SMA(10)
-- **Confidence Threshold**: 75% for order execution
-- **Order Type**: Good-Till-Canceled (GTC) for crypto
+**Each ticker runs independently with its own strategy and parameters:**
+
+- **Ticker Selection**: All tickers in `best_parameters` table where `is_active = 1`
+- **Per-Ticker Parameters**:
+  - `fast_ema`: Fast EMA period (e.g., 12)
+  - `slow_ema`: Slow EMA period (e.g., 26)
+  - `trailing_stop`: Trailing stop loss percentage (e.g., 2.5%)
+  - `strategy_name`: Strategy to use (e.g., `ema_crossover`, `grid_trading`)
+  - `asset_class`: Crypto, Stock, or Option
+- **Decision Frequency**: Configurable per ticker via `decision_interval` (in seconds)
+- **Confidence Threshold**: 75% minimum for order execution
+- **Order Execution**: Market orders (or Gemini can override to limit/trailing_stop/stop_limit per trade)
 
 ## Managing Tickers
 
-The bot evaluates all active tickers from the database. To add or remove tickers:
+The bot runs all tickers with active parameters in the `best_parameters` table. To add a new ticker:
 
 ```python
-from database import setup_database, get_active_tickers
+from database import setup_database, save_best_parameters
 
-# View all active tickers
-active = get_active_tickers()  # Returns list of ticker symbols
+setup_database()
 
-# To add a ticker to database
+# Add SOL/USD with EMA(12,26) crossover strategy
+params = {
+    "fast_ema": 12,
+    "slow_ema": 26,
+    "trailing_stop": 2.5,
+    "decision_interval": 300,    # 5 minutes
+    "pnl_trigger_pct": 3.0       # trigger on ±3% PnL move
+}
+
+save_best_parameters(
+    ticker="SOL/USD",
+    parameters=params,
+    asset_class="CRYPTO",
+    strategy_name="ema_crossover",
+    is_active=1
+)
+```
+
+To disable a ticker without deleting it:
+
+```python
 conn = get_db_connection()
-conn.execute("INSERT OR IGNORE INTO tickers (ticker, active, insert_date, last_update) VALUES (?, 1, ?, ?)", 
-             ("BTC/USD", datetime.now().isoformat(), datetime.now().isoformat()))
-conn.commit()
-conn.close()
-
-# To deactivate a ticker
-conn = get_db_connection()
-conn.execute("UPDATE tickers SET active = 0 WHERE ticker = ?", ("BTC/USD",))
+conn.execute("UPDATE best_parameters SET is_active = 0 WHERE ticker = ?", ("SOL/USD",))
 conn.commit()
 conn.close()
 ```
+
+### Parameter Guide
+
+| Parameter | Type | Example | Purpose |
+|-----------|------|---------|---------|
+| `fast_ema` | int | 12 | Period for fast EMA (must be < slow_ema) |
+| `slow_ema` | int | 26 | Period for slow EMA |
+| `trailing_stop` | float | 2.5 | Default trailing stop loss percentage |
+| `decision_interval` | int | 60 | Minimum seconds between Gemini decisions (rate limit) |
+| `pnl_trigger_pct` | float | 3.0 | Unrealized PnL % threshold to trigger decision |
+| `strategy_name` | string | ema_crossover | Strategy to use (ema_crossover, grid_trading, etc.) |
+| `asset_class` | string | CRYPTO | Asset class: CRYPTO, STOCK, OPTION |
 
 ## Testing & Running the Bot
 
