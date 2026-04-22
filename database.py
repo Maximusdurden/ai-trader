@@ -49,6 +49,8 @@ def setup_database():
 			trailing_stop REAL,
 			strategy_name TEXT,
 			parameters TEXT,
+			decision_interval INTEGER DEFAULT 300,
+			pnl_trigger_pct REAL DEFAULT 3.0,
 			last_updated TEXT,
 			PRIMARY KEY (ticker, asset_class)
 		)
@@ -60,15 +62,29 @@ def setup_database():
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			ticker TEXT,
 			timestamp TEXT,
-			decision TEXT,
+			action TEXT,
 			confidence REAL,
 			allocation_pct REAL,
 			reasoning TEXT,
-			action_taken TEXT,
+			trigger_type TEXT,
+			gemini_response_json TEXT,
+			ema_fast REAL,
+			ema_slow REAL,
+			ema_signal TEXT,
+			news_headline TEXT,
+			position_qty_before REAL,
+			position_pnl_pct_before REAL,
+			strategy_name TEXT,
+			strategy_params_json TEXT,
+			gemini_overrides_json TEXT,
+			execution_status TEXT,
+			execution_error TEXT,
+			order_id TEXT,
 			price_at_decision REAL,
 			executed_price REAL,
-			quantity REAL,
-			order_id TEXT
+			actual_fill_price REAL,
+			slippage REAL,
+			quantity REAL
 		)
 	""")
 
@@ -341,6 +357,65 @@ def get_best_parameters_json(ticker, asset_class):
 
 	except Exception as e:
 		logger.error(f"Error fetching parameters JSON: {e}")
+		return None
+	finally:
+		conn.close()
+
+
+def log_trade_decision(trade_log_data):
+	"""
+	Logs a comprehensive trade decision to the database.
+
+	Args:
+		trade_log_data: dict with keys:
+			- ticker, action, confidence, allocation_pct, reasoning
+			- trigger_type, gemini_response_json, ema_fast, ema_slow, ema_signal
+			- news_headline, position_qty_before, position_pnl_pct_before
+			- strategy_name, strategy_params_json, gemini_overrides_json
+			- execution_status, execution_error, order_id, executed_price, quantity
+	"""
+	conn = get_db_connection()
+	cursor = conn.cursor()
+
+	try:
+		cursor.execute("""
+			INSERT INTO trade_log (
+				ticker, timestamp, action, confidence, allocation_pct, reasoning,
+				trigger_type, gemini_response_json, ema_fast, ema_slow, ema_signal,
+				news_headline, position_qty_before, position_pnl_pct_before,
+				strategy_name, strategy_params_json, gemini_overrides_json,
+				execution_status, execution_error, order_id, executed_price, quantity
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		""", (
+			trade_log_data.get('ticker'),
+			datetime.now().isoformat(),
+			trade_log_data.get('action'),
+			trade_log_data.get('confidence'),
+			trade_log_data.get('allocation_pct'),
+			trade_log_data.get('reasoning'),
+			trade_log_data.get('trigger_type'),
+			trade_log_data.get('gemini_response_json'),
+			trade_log_data.get('ema_fast'),
+			trade_log_data.get('ema_slow'),
+			trade_log_data.get('ema_signal'),
+			trade_log_data.get('news_headline'),
+			trade_log_data.get('position_qty_before'),
+			trade_log_data.get('position_pnl_pct_before'),
+			trade_log_data.get('strategy_name'),
+			trade_log_data.get('strategy_params_json'),
+			trade_log_data.get('gemini_overrides_json'),
+			trade_log_data.get('execution_status'),
+			trade_log_data.get('execution_error'),
+			trade_log_data.get('order_id'),
+			trade_log_data.get('executed_price'),
+			trade_log_data.get('quantity'),
+		))
+		conn.commit()
+		logger.info(f"Trade logged for {trade_log_data.get('ticker')}: {trade_log_data.get('action')}")
+		return cursor.lastrowid
+
+	except Exception as e:
+		logger.error(f"Failed to log trade: {e}")
 		return None
 	finally:
 		conn.close()
