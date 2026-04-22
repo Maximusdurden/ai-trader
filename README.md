@@ -14,19 +14,41 @@ An AI-powered cryptocurrency trading bot that uses Google's Gemini API to make i
 
 ## Architecture
 
+The bot uses a **hybrid event-driven architecture** that reacts to trading triggers instead of polling on fixed intervals:
+
 ```
-main.py
-├── api.py (Alpaca trading + data client)
-├── brain.py (Gemini AI decision engine)
-└── 5-minute polling loop with order execution
+startup.py (Bootstrap entry point)
+├── main_hybrid.py (Trading Bot - Event Driven)
+│   ├── core/api.py (Alpaca API wrapper)
+│   ├── core/brain.py (Gemini AI engine)
+│   ├── core/strategies.py (Strategy executors)
+│   ├── core/stream_manager.py (WebSocket streams)
+│   │   ├── CryptoDataStream (bar updates)
+│   │   ├── NewsDataStream (breaking news)
+│   │   └── TradingStream (order fills)
+│   ├── core/ticker_state.py (Per-ticker state machine)
+│   └── core/database.py (SQLite persistence)
+│
+└── dashboard.py (Web HUD on http://localhost:5000)
+    ├── Account metrics (equity, cash, buying power)
+    ├── Open positions (with live PnL)
+    ├── Today's trades (execution log)
+    ├── Trading statistics (win rate, confidence)
+    ├── Active tickers (currently monitored)
+    └── Trade history (all tickers traded)
 ```
 
 ### Key Components
 
-- **api.py**: Alpaca API wrapper providing access to account info, market data, and order management
-- **brain.py**: Gemini-based decision engine that analyzes context and returns JSON decisions
-- **database.py**: SQLite database manager for storing parameters, trades, and performance metrics
-- **main.py**: Main bot loop that polls every 5 minutes, gathers data, and executes trades
+- **core/api.py**: Unified Alpaca API wrapper with centralized enums/types
+- **core/brain.py**: Gemini 2.0 Flash decision engine with retry/backoff logic
+- **core/strategies.py**: Strategy executors that merge DB defaults with Gemini overrides
+- **core/stream_manager.py**: WebSocket event handlers (bars, news, fills)
+- **core/ticker_state.py**: In-memory state machine for each ticker
+- **core/database.py**: SQLite database for parameters, trades, and metrics
+- **main_hybrid.py**: Event-driven trading bot triggered by WebSocket events
+- **dashboard.py**: Flask-based real-time web UI for monitoring
+- **startup.py**: Bootstrap script to start all services together
 
 ## Database
 
@@ -134,33 +156,70 @@ GEMINI_API_KEY=your_gemini_api_key
 
 ## Usage
 
-Run the bot:
+### Quick Start: Bootstrap Everything
+
+Run both the trading bot and web dashboard with one command:
 
 ```bash
-python main.py
+python startup.py
 ```
 
-For each active ticker, the bot will:
-1. **Load parameters** from database for the ticker
-2. **Fetch account data**: Available cash and current positions
-3. **Calculate technical indicators**: EMA(fast) and EMA(slow) using ticker-specific periods
-4. **Retrieve market data**: 15-minute bars and recent news for the trading pair
-5. **Request AI decision**: Send context + parameters to Gemini for buy/sell/hold decision
-6. **Execute trades**: Place orders if confidence > 75%
-7. **Log results**: Record decision, parameters used, and execution status
+This will:
+- ✅ Start the trading bot (`main_hybrid.py`)
+- ✅ Start the web dashboard at `http://localhost:5000`
+- ✅ Monitor both services and handle graceful shutdown (Ctrl+C)
 
-Example evaluation cycle for SOL/USD:
-```
-1. Load parameters: EMA(12,26), Stop=2.5%
-2. Calculate EMA_12 and EMA_26 on 15-min bars
-3. Determine EMA signal: BULLISH (if EMA_12 > EMA_26) or BEARISH
-4. Fetch latest news about SOL/USD
-5. Send to Gemini: "EMA_12: 145.2, EMA_12: 142.5, Signal: BULLISH, Recent news: ..."
-6. Gemini responds: "BUY with 82% confidence, allocate 50% of cash"
-7. Execute 50% cash position, log with parameters used
+Open your browser to **http://localhost:5000** to see live trading activity:
+- 📊 Account equity and daily PnL
+- 💰 Open positions with live profit/loss
+- 📈 Today's trades and execution details
+- 🎯 Active tickers being monitored
+- 📋 Historical trade statistics
+
+### Advanced Usage
+
+Run individual services:
+
+```bash
+python startup.py --bot-only        # Just the trading bot
+python startup.py --dashboard-only  # Just the web UI
 ```
 
-The bot cycles through all active tickers and repeats every 5 minutes.
+Or run directly:
+
+```bash
+python main_hybrid.py  # Event-driven trading bot
+python dashboard.py    # Flask web dashboard
+```
+
+### How the Bot Works
+
+The bot uses **event-driven architecture** instead of polling:
+
+1. **WebSocket Streams**: Connected to Alpaca's CryptoDataStream (bars), NewsDataStream, and TradingStream
+2. **Trigger Detection**: For each ticker, monitors for:
+   - **EMA Crossovers**: Fast EMA crosses slow EMA (bullish/bearish signal)
+   - **PnL Thresholds**: Position moves ±X% (configurable per ticker)
+   - **Breaking News**: Market-moving news always triggers decision
+3. **Rate Limiting**: Respects `decision_interval` (default 300s) between Gemini calls per ticker
+4. **AI Decision**: When triggered, sends full context to Gemini:
+   - Technical indicators (EMA values, signals)
+   - Current position and PnL
+   - Recent news headlines
+   - Strategy parameters and defaults
+5. **Execution**: Gemini can propose execution overrides (order type, trailing stop %, take profit %)
+6. **Audit Log**: Every decision logged to database with full context for later analysis
+
+Example trigger sequence:
+```
+15:30:45 - EMA crossover detected for SOL/USD (BULLISH)
+15:30:45 - Last decision was 5+ minutes ago ✓ (respects decision_interval)
+15:30:46 - Call Gemini with: EMA signals, position status, news, account metrics
+15:30:48 - Gemini responds: BUY, 85% confidence, market order, 2% trailing stop
+15:30:48 - Execute: Buy 0.5 SOL/USD at market price
+15:30:49 - Log trade with full decision context to database
+15:30:49 - Dashboard updates in real-time
+```
 
 ## Per-Ticker Configuration
 
