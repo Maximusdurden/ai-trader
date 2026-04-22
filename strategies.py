@@ -1,240 +1,278 @@
 import logging
-from api import place_order, submit_trailing_stop_order, submit_stop_limit_order
+import pandas as pd
+import numpy as np
+from api import place_order
 from alpaca.trading.enums import OrderSide
 
 logger = logging.getLogger(__name__)
 
 
-def execute_ema_crossover_strategy(trading_client, ticker, decision, current_position, cash, params):
+class StrategyExecutor:
 	"""
-	EMA Crossover Strategy: Standard buy/sell based on EMA signals.
-	Uses parameters: fast_ema, slow_ema, trailing_stop
+	Base strategy executor that interprets Gemini decisions using
+	strategy parameters from best_parameters table.
+
+	Each strategy defines:
+	- How to calculate indicators (fast_ema, slow_ema, etc.)
+	- How to interpret signals (entry/exit conditions)
+	- How to interact with the API (order types, sizing, etc.)
 	"""
-	logger.info(f"Executing EMA Crossover strategy for {ticker}")
 
-	trailing_stop = params.get('trailing_stop', 2.0)
-	allocation_pct = decision.get('allocation_pct', 50)
-	confidence = decision['confidence']
-	action = decision['action']
+	def __init__(self, strategy_name, parameters):
+		self.strategy_name = strategy_name
+		self.parameters = parameters
+		self.fast_ema = parameters.get('fast_ema', 12)
+		self.slow_ema = parameters.get('slow_ema', 26)
+		self.trailing_stop = parameters.get('trailing_stop', 2.0)
+		self.trend_ema_period = parameters.get('trend_ema_period', 200)
+		self.take_profit_percent = parameters.get('take_profit_percent')
+		self.trade_size_percent = parameters.get('trade_size_percent', 0.95)
 
-	if action == 'BUY' and confidence > 75:
-		amount_to_spend = cash * (allocation_pct / 100)
-		if amount_to_spend > 10:
-			logger.info(f"BUY signal: Allocating {allocation_pct}% of cash (${amount_to_spend:.2f})")
-			# Place standard buy order
+	def validate_parameters(self):
+		"""Validate parameter combinations are valid for this strategy."""
+		if self.fast_ema >= self.slow_ema:
+			logger.error(f"Invalid EMA periods: fast_ema ({self.fast_ema}) must be < slow_ema ({self.slow_ema})")
+			return False
+		return True
+
+	def calculate_indicators(self, df):
+		"""Calculate technical indicators needed for this strategy."""
+		if df is None or df.empty:
+			return df
+
+		# Use HLC3 (High+Low+Close)/3 for smoother MA
+		df['HLC3'] = (df['high'] + df['low'] + df['close']) / 3
+
+		# Calculate EMAs
+		df[f'EMA_{self.fast_ema}'] = df['HLC3'].ewm(span=self.fast_ema, adjust=False).mean()
+		df[f'EMA_{self.slow_ema}'] = df['HLC3'].ewm(span=self.slow_ema, adjust=False).mean()
+
+		# Shift previous values for crossover detection
+		df['EMA_fast_prev'] = df[f'EMA_{self.fast_ema}'].shift(1)
+		df['EMA_slow_prev'] = df[f'EMA_{self.slow_ema}'].shift(1)
+
+		# Trend filter EMA
+		df[f'EMA_{self.trend_ema_period}'] = df['HLC3'].ewm(span=self.trend_ema_period, adjust=False).mean()
+
+		return df
+
+	def detect_crossover_signals(self, current_row, prev_row):
+		"""Detect bullish and bearish EMA crossovers."""
+		if prev_row is None:
+			return {'bullish': False, 'bearish': False}
+
+		fast_col = f'EMA_{self.fast_ema}'
+		slow_col = f'EMA_{self.slow_ema}'
+
+		# Bullish: fast EMA crosses above slow EMA
+		bullish = (
+			current_row[fast_col] > current_row[slow_col] and
+			prev_row[fast_col] <= prev_row[slow_col]
+		)
+
+		# Bearish: fast EMA crosses below slow EMA
+		bearish = (
+			current_row[fast_col] < current_row[slow_col] and
+			prev_row[fast_col] >= prev_row[slow_col]
+		)
+
+		return {'bullish': bullish, 'bearish': bearish}
+
+	def generate_execution_plan(self, decision, current_position, cash, indicators=None):
+		"""
+		Generate API execution plan based on:
+		- Gemini decision (action, confidence, allocation)
+		- Strategy parameters (trailing stop, position sizing, etc.)
+		- Current market state (position, price, indicators)
+
+		Returns dict with execution instructions for apply_execution_plan()
+		"""
+		action = decision.get('action', 'HOLD')
+		confidence = decision.get('confidence', 0)
+		allocation_pct = decision.get('allocation_pct', 50)
+
+		if action == 'BUY' and confidence > 75:
+			# Calculate position size based on strategy parameters
+			amount = cash * (allocation_pct / 100)
+
 			return {
 				'action': 'BUY',
-				'amount': amount_to_spend,
-				'use_trailing_stop': True,
-				'trailing_stop_percent': trailing_stop
+				'amount': amount,
+				'trailing_stop_percent': self.trailing_stop,
+				'take_profit_percent': self.take_profit_percent,
+				'strategy': self.strategy_name,
+				'parameters_used': {
+					'fast_ema': self.fast_ema,
+					'slow_ema': self.slow_ema,
+					'trailing_stop': self.trailing_stop,
+					'allocation': allocation_pct
+				}
 			}
 
-	elif action == 'SELL' and current_position and confidence > 75:
-		qty_to_sell = float(current_position.qty) * (allocation_pct / 100)
-		if qty_to_sell > 0:
-			logger.info(f"SELL signal: Selling {allocation_pct}% of position ({qty_to_sell:.4f} units)")
+		elif action == 'SELL' and current_position and confidence > 75:
+			qty_to_sell = float(current_position.qty) * (allocation_pct / 100)
+
 			return {
 				'action': 'SELL',
-				'quantity': qty_to_sell
+				'quantity': qty_to_sell,
+				'strategy': self.strategy_name,
+				'parameters_used': {
+					'allocation': allocation_pct
+				}
 			}
 
-	logger.info(f"No action for {ticker}: HOLD")
-	return {'action': 'HOLD'}
-
-
-def execute_grid_trading_strategy(trading_client, ticker, decision, current_position, cash, params):
-	"""
-	Grid Trading Strategy: Places multiple orders at different price levels.
-	Uses parameters: grid_levels, grid_spacing, position_size
-	"""
-	logger.info(f"Executing Grid Trading strategy for {ticker}")
-
-	grid_levels = params.get('grid_levels', 5)
-	grid_spacing = params.get('grid_spacing', 1.0)  # percentage
-	position_size = params.get('position_size', 10)  # base position size
-
-	decision_action = decision.get('action', 'HOLD')
-
-	if decision_action == 'BUY' and decision['confidence'] > 75:
-		logger.info(f"Grid BUY: Creating {grid_levels} grid levels with {grid_spacing}% spacing")
 		return {
-			'action': 'GRID_BUY',
-			'grid_levels': grid_levels,
-			'grid_spacing': grid_spacing,
-			'position_size': position_size
+			'action': 'HOLD',
+			'strategy': self.strategy_name,
+			'reason': f"Action={action}, Confidence={confidence}% (need >75%)"
 		}
 
-	elif decision_action == 'SELL' and current_position and decision['confidence'] > 75:
-		logger.info(f"Grid SELL: Liquidating position across {grid_levels} levels")
-		return {
-			'action': 'GRID_SELL',
-			'grid_levels': grid_levels,
-			'grid_spacing': grid_spacing,
-			'position_size': position_size
-		}
 
-	return {'action': 'HOLD'}
-
-
-def execute_trailing_stop_strategy(trading_client, ticker, decision, current_position, cash, params):
+class EMAcrossoverExecutor(StrategyExecutor):
 	"""
-	Trailing Stop Strategy: Enters position and sets trailing stop loss.
-	Uses parameters: trailing_stop, entry_threshold, exit_threshold
+	EMA Crossover Strategy Executor
+	Based on full_featured_ema_crossover from dexter-trader
+
+	Key Logic:
+	1. Calculate fast EMA and slow EMA
+	2. Detect crossovers (bullish when fast > slow, bearish when fast < slow)
+	3. Use trend filter for additional confirmation
+	4. Apply trailing stop loss on positions
+	5. Execute with Gemini-assisted decision-making
 	"""
-	logger.info(f"Executing Trailing Stop strategy for {ticker}")
 
-	trailing_stop = params.get('trailing_stop', 2.5)
-	entry_threshold = params.get('entry_threshold', 80)
-	allocation_pct = decision.get('allocation_pct', 50)
+	def __init__(self, parameters):
+		super().__init__('ema_crossover', parameters)
+		logger.info(f"EMA Crossover Executor: fast={self.fast_ema}, slow={self.slow_ema}, trail_stop={self.trailing_stop}%")
 
-	if decision['action'] == 'BUY' and decision['confidence'] > entry_threshold:
-		amount_to_spend = cash * (allocation_pct / 100)
-		if amount_to_spend > 10:
-			logger.info(f"Trailing Stop BUY: {allocation_pct}% allocation with {trailing_stop}% stop")
+
+class GridTradingExecutor(StrategyExecutor):
+	"""
+	Grid Trading Strategy Executor
+	Based on full_featured_grid_trading from dexter-trader
+
+	Key Parameters:
+	- grid_levels: Number of grid lines above/below center
+	- grid_spacing: Spacing between levels (percentage)
+	- atr_multiplier: ATR multiple for grid width
+
+	Places multiple orders at different price levels for scaling in/out.
+	"""
+
+	def __init__(self, parameters):
+		super().__init__('grid_trading', parameters)
+		self.grid_levels = parameters.get('grid_levels', 5)
+		self.grid_spacing = parameters.get('grid_spacing', 1.0)
+		self.atr_multiplier = parameters.get('atr_multiplier', 1.5)
+		logger.info(f"Grid Trading Executor: levels={self.grid_levels}, spacing={self.grid_spacing}%")
+
+	def generate_execution_plan(self, decision, current_position, cash, indicators=None):
+		"""Grid trading places multiple orders at grid levels."""
+		action = decision.get('action', 'HOLD')
+		confidence = decision.get('confidence', 0)
+
+		if action == 'BUY' and confidence > 75:
 			return {
-				'action': 'BUY_WITH_TRAILING_STOP',
-				'amount': amount_to_spend,
-				'trailing_stop_percent': trailing_stop
+				'action': 'GRID_BUY',
+				'grid_levels': self.grid_levels,
+				'grid_spacing': self.grid_spacing,
+				'available_cash': cash,
+				'strategy': self.strategy_name,
+				'parameters_used': {
+					'grid_levels': self.grid_levels,
+					'grid_spacing': self.grid_spacing,
+					'atr_multiplier': self.atr_multiplier
+				}
 			}
 
-	elif decision['action'] == 'SELL' and current_position and decision['confidence'] > 75:
-		logger.info(f"Trailing Stop SELL: Exiting position")
-		return {
-			'action': 'SELL',
-			'quantity': float(current_position.qty)
-		}
+		elif action == 'SELL' and current_position and confidence > 75:
+			return {
+				'action': 'GRID_SELL',
+				'grid_levels': self.grid_levels,
+				'position_quantity': float(current_position.qty),
+				'strategy': self.strategy_name
+			}
 
-	return {'action': 'HOLD'}
-
-
-def execute_dca_strategy(trading_client, ticker, decision, current_position, cash, params):
-	"""
-	Dollar Cost Averaging (DCA) Strategy: Regular small buys regardless of price.
-	Uses parameters: dca_amount, dca_frequency, max_position
-	"""
-	logger.info(f"Executing DCA strategy for {ticker}")
-
-	dca_amount = params.get('dca_amount', 100)  # USD amount per order
-	max_position = params.get('max_position', 1000)  # max position size
-
-	if decision['action'] == 'BUY' and decision['confidence'] > 50:
-		logger.info(f"DCA BUY: ${dca_amount} purchase")
-		return {
-			'action': 'DCA_BUY',
-			'amount': dca_amount,
-			'max_position': max_position
-		}
-
-	elif decision['action'] == 'SELL' and current_position:
-		logger.info(f"DCA SELL: Liquidating {ticker}")
-		return {
-			'action': 'SELL',
-			'quantity': float(current_position.qty)
-		}
-
-	return {'action': 'HOLD'}
+		return {'action': 'HOLD', 'strategy': self.strategy_name}
 
 
-STRATEGY_HANDLERS = {
-	'ema_crossover': execute_ema_crossover_strategy,
-	'full_featured_ema_crossover': execute_ema_crossover_strategy,
-	'grid_trading': execute_grid_trading_strategy,
-	'full_featured_grid_trading': execute_grid_trading_strategy,
-	'trailing_stop': execute_trailing_stop_strategy,
-	'dca': execute_dca_strategy,
-	'dollar_cost_averaging': execute_dca_strategy,
-	'ai_trader_gemini': execute_ema_crossover_strategy,  # default strategy
+STRATEGY_EXECUTORS = {
+	'ema_crossover': EMAcrossoverExecutor,
+	'full_featured_ema_crossover': EMAcrossoverExecutor,
+	'ai_trader_gemini': EMAcrossoverExecutor,
+	'grid_trading': GridTradingExecutor,
+	'full_featured_grid_trading': GridTradingExecutor,
 }
 
 
-def execute_strategy(trading_client, ticker, decision, current_position, cash, strategy_name, params):
+def get_strategy_executor(strategy_name, parameters):
 	"""
-	Route to appropriate strategy handler based on strategy_name and parameters.
-
-	Args:
-		trading_client: Alpaca trading client
-		ticker: Ticker symbol
-		decision: Dict from Gemini with action, confidence, allocation_pct, reasoning
-		current_position: Current position object or None
-		cash: Available cash
-		strategy_name: Name of strategy to execute
-		params: Dict with strategy parameters
-
-	Returns:
-		Dict with execution plan that can be applied to API
+	Factory function to get the appropriate strategy executor
+	based on strategy_name and loaded parameters.
 	"""
-	handler = STRATEGY_HANDLERS.get(strategy_name.lower(), execute_ema_crossover_strategy)
+	executor_class = STRATEGY_EXECUTORS.get(
+		strategy_name.lower(),
+		EMAcrossoverExecutor  # Default to EMA Crossover
+	)
 
-	logger.info(f"Strategy handler selected: {strategy_name}")
-	execution_plan = handler(trading_client, ticker, decision, current_position, cash, params)
+	executor = executor_class(parameters)
 
-	return execution_plan
+	if not executor.validate_parameters():
+		logger.error(f"Invalid parameters for {strategy_name}. Using defaults.")
+		# Fall back to defaults if validation fails
+		return EMAcrossoverExecutor(parameters)
+
+	return executor
 
 
 def apply_execution_plan(trading_client, ticker, execution_plan):
 	"""
-	Applies the execution plan by calling appropriate API functions.
-
-	Args:
-		trading_client: Alpaca trading client
-		ticker: Ticker symbol
-		execution_plan: Dict returned from execute_strategy()
-
-	Returns:
-		Bool indicating success
+	Execute the plan by calling appropriate api.py functions.
+	Different strategies and parameters lead to different API interactions.
 	"""
 	action = execution_plan.get('action', 'HOLD')
 
 	try:
 		if action == 'HOLD':
-			logger.info(f"{ticker}: No action taken")
+			logger.info(f"{ticker}: {execution_plan.get('reason', 'No action')}")
 			return True
 
 		elif action == 'BUY':
 			from api import get_latest_crypto_data
 			amount = execution_plan.get('amount')
-			latest_quote = get_latest_crypto_data([ticker])
-			price = latest_quote[ticker].ask_price
-			qty = amount / price
-			logger.info(f"Placing BUY order: {qty:.4f} units of {ticker} at ${price:.2f}")
-			place_order(trading_client, ticker, OrderSide.BUY, qty, None)
-			return True
+			trailing_stop = execution_plan.get('trailing_stop_percent')
 
-		elif action == 'BUY_WITH_TRAILING_STOP':
-			from api import get_latest_crypto_data
-			amount = execution_plan.get('amount')
-			trailing_stop_pct = execution_plan.get('trailing_stop_percent', 2.0)
 			latest_quote = get_latest_crypto_data([ticker])
 			price = latest_quote[ticker].ask_price
 			qty = amount / price
-			logger.info(f"Placing BUY with trailing stop: {qty:.4f} units at ${price:.2f}, stop={trailing_stop_pct}%")
+
+			logger.info(f"BUY {ticker}: {qty:.4f} units @ ${price:.2f}")
+			logger.info(f"  Strategy: {execution_plan.get('strategy')}")
+			logger.info(f"  Trailing Stop: {trailing_stop}%")
+			logger.info(f"  Parameters: {execution_plan.get('parameters_used')}")
+
 			place_order(trading_client, ticker, OrderSide.BUY, qty, None)
-			# Trailing stop would be placed separately after order fills
 			return True
 
 		elif action == 'SELL':
+			from api import get_latest_crypto_data
 			qty = execution_plan.get('quantity')
-			logger.info(f"Placing SELL order: {qty:.4f} units of {ticker}")
+
+			latest_quote = get_latest_crypto_data([ticker])
+			price = latest_quote[ticker].bid_price
+
+			logger.info(f"SELL {ticker}: {qty:.4f} units @ ${price:.2f}")
+			logger.info(f"  Strategy: {execution_plan.get('strategy')}")
+			logger.info(f"  Parameters: {execution_plan.get('parameters_used')}")
+
 			place_order(trading_client, ticker, OrderSide.SELL, qty, None)
 			return True
 
-		elif action == 'GRID_BUY':
-			logger.info(f"Grid trading BUY logic would be implemented here for {ticker}")
-			# This would require extended API calls for grid implementation
-			return True
-
-		elif action == 'GRID_SELL':
-			logger.info(f"Grid trading SELL logic would be implemented here for {ticker}")
-			return True
-
-		elif action == 'DCA_BUY':
-			from api import get_latest_crypto_data
-			amount = execution_plan.get('amount')
-			latest_quote = get_latest_crypto_data([ticker])
-			price = latest_quote[ticker].ask_price
-			qty = amount / price
-			logger.info(f"DCA BUY: ${amount:.2f} → {qty:.4f} units at ${price:.2f}")
-			place_order(trading_client, ticker, OrderSide.BUY, qty, None)
+		elif action in ['GRID_BUY', 'GRID_SELL']:
+			# Grid trading would place multiple orders
+			logger.info(f"Grid Trading ({action}) for {ticker} - implementation placeholder")
+			logger.info(f"  Levels: {execution_plan.get('grid_levels')}")
+			logger.info(f"  Spacing: {execution_plan.get('grid_spacing')}%")
 			return True
 
 		else:

@@ -11,7 +11,7 @@ from api import (
 )
 from brain import evaluate_asset
 from database import setup_database, get_active_tickers, get_best_parameters_json
-from strategies import execute_strategy, apply_execution_plan
+from strategies import get_strategy_executor, apply_execution_plan
 from alpaca.trading.enums import OrderSide, TimeInForce
 
 # Setup logging
@@ -122,19 +122,18 @@ def evaluate_ticker(trading_client, ticker):
         logger.info(f"Gemini Decision: {decision['action']} (Confidence: {decision['confidence']}%)")
         logger.info(f"Reasoning: {decision['reasoning']}")
 
-        # 7. Execute Strategy-Specific Logic
-        execution_plan = execute_strategy(
-            trading_client,
-            ticker,
-            decision,
-            current_position,
-            cash,
-            strategy_name,
-            {'fast_ema': fast_ema, 'slow_ema': slow_ema, 'trailing_stop': trailing_stop}
-        )
+        # 7. Get strategy executor and generate execution plan
+        executor = get_strategy_executor(strategy_name, {
+            'fast_ema': fast_ema,
+            'slow_ema': slow_ema,
+            'trailing_stop': trailing_stop,
+            'trend_ema_period': 200
+        })
+
+        execution_plan = executor.generate_execution_plan(decision, current_position, cash)
         logger.info(f"Execution plan: {execution_plan}")
 
-        # 8. Apply Execution Plan (interact with API)
+        # 8. Apply Execution Plan (interact with API based on strategy)
         apply_execution_plan(trading_client, ticker, execution_plan)
 
     except Exception as e:
