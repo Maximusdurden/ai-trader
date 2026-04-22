@@ -225,6 +225,40 @@ def get_active_tickers():
 		return []
 
 
+def get_agent_reasoning():
+	"""Get recent agent reasoning and commentary."""
+	conn = get_db_connection()
+	cursor = conn.cursor()
+
+	try:
+		query = """
+			SELECT ticker, timestamp, action, confidence, reasoning, trigger_type
+			FROM trade_log
+			WHERE reasoning IS NOT NULL AND reasoning != ''
+			ORDER BY timestamp DESC
+			LIMIT 30
+		"""
+		rows = cursor.execute(query).fetchall()
+
+		reasoning_log = []
+		for row in rows:
+			reasoning_log.append({
+				'ticker': row[0],
+				'timestamp': row[1],
+				'action': row[2],
+				'confidence': row[3],
+				'reasoning': row[4],
+				'trigger_type': row[5]
+			})
+
+		return reasoning_log
+	except Exception as e:
+		logger.error(f"Error fetching agent reasoning: {e}")
+		return []
+	finally:
+		conn.close()
+
+
 def get_recent_news():
 	"""Get recent market news that triggered decisions."""
 	conn = get_db_connection()
@@ -336,6 +370,12 @@ def api_tickers():
 	return jsonify(get_active_tickers())
 
 
+@app.route('/api/reasoning')
+def api_reasoning():
+	"""API endpoint for agent reasoning log."""
+	return jsonify(get_agent_reasoning())
+
+
 @app.route('/api/news')
 def api_news():
 	"""API endpoint for recent news."""
@@ -359,6 +399,7 @@ def api_dashboard():
 		'active_tickers': get_active_tickers(),
 		'traded_tickers': get_all_traded_tickers(),
 		'recent_news': get_recent_news(),
+		'reasoning': get_agent_reasoning(),
 		'timestamp': datetime.now().isoformat()
 	})
 
