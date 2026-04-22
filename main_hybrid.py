@@ -200,18 +200,52 @@ def run_bot():
 	logger.info("Starting WebSocket streams...")
 	streams = start_streams(ticker_states, trigger_engine, ALPACA_KEY, ALPACA_SECRET, paper=True)
 
-	# Keep-alive loop: refresh cash every 5 minutes
+	# Keep-alive loop: refresh cash and optionally poll for testing
 	logger.info("Streams started. Bot is live. Press Ctrl+C to stop.")
+
+	# Set TEST_MODE=True in .env to enable polling (for testing without waiting for triggers)
+	test_mode = os.getenv('TEST_MODE', 'False').lower() == 'true'
+	polling_interval = int(os.getenv('POLLING_INTERVAL', '30'))  # seconds
+
+	if test_mode:
+		logger.info(f"[TEST MODE] Polling enabled: evaluating all tickers every {polling_interval}s")
+
 	try:
+		last_cash_refresh = time.time()
+		last_poll_eval = time.time()
 		while True:
-			time.sleep(300)  # 5 minutes
-			try:
-				cash = get_available_cash(trading_client)
-				for state in ticker_states.values():
-					state.cash = cash
-				logger.info(f"Cash refreshed: ${cash:.2f}")
-			except Exception as e:
-				logger.warning(f"Failed to refresh cash: {e}")
+			time.sleep(5)  # Check every 5 seconds
+			now = time.time()
+
+			# Refresh cash every 5 minutes
+			if int(now - last_cash_refresh) >= 300:
+				try:
+					cash = get_available_cash(trading_client)
+					for state in ticker_states.values():
+						state.cash = cash
+					logger.info(f"Cash refreshed: ${cash:.2f}")
+				except Exception as e:
+					logger.warning(f"Failed to refresh cash: {e}")
+				last_cash_refresh = now
+
+			# In test mode, poll all tickers periodically
+			if test_mode and int(now - last_poll_eval) >= polling_interval:
+				logger.info(f"[TEST] Polling all tickers...")
+				for ticker, state in ticker_states.items():
+					try:
+						# Force a decision even without a trigger
+						full_context = state.build_context()
+						params = get_best_parameters_json(ticker, 'CRYPTO' if '/' in ticker else 'STOCK')
+						if params:
+							strategy_name = params.get('strategy_name', 'unknown')
+							strategy_params = params.get('parameters_dict', {})
+							decision = evaluate_asset(ticker, full_context, strategy_name, strategy_params)
+							logger.info(f"[TEST] {ticker}: {decision['action']} (Confidence: {decision['confidence']}%)")
+							logger.info(f"  Reasoning: {decision['reasoning'][:100]}...")
+					except Exception as e:
+						logger.error(f"[TEST] Error evaluating {ticker}: {e}")
+				last_poll_eval = now
+
 	except KeyboardInterrupt:
 		logger.info("Shutting down...")
 
