@@ -11,6 +11,7 @@ from api import (
 )
 from brain import evaluate_asset
 from database import setup_database, get_active_tickers, get_best_parameters_json
+from strategies import execute_strategy, apply_execution_plan
 from alpaca.trading.enums import OrderSide, TimeInForce
 
 # Setup logging
@@ -121,30 +122,20 @@ def evaluate_ticker(trading_client, ticker):
         logger.info(f"Gemini Decision: {decision['action']} (Confidence: {decision['confidence']}%)")
         logger.info(f"Reasoning: {decision['reasoning']}")
 
-        # 7. Execute Decision (using ticker-specific parameters)
-        if decision['action'] == 'BUY' and decision['confidence'] > 75:
-            amount_to_spend = cash * (decision['allocation_pct'] / 100)
-            if amount_to_spend > 10:
-                latest_quote = get_latest_crypto_data([ticker])
-                price = latest_quote[ticker].ask_price
-                qty = amount_to_spend / price
-                logger.info(f"EXECUTING BUY: {qty:.4f} units of {ticker} at ~${price}")
-                logger.info(f"Trailing stop configured: {trailing_stop}%")
-                try:
-                    place_order(trading_client, ticker, OrderSide.BUY, qty, None, time_in_force=TimeInForce.GTC)
-                except Exception as e:
-                    logger.error(f"Buy Order Failed: {e}")
+        # 7. Execute Strategy-Specific Logic
+        execution_plan = execute_strategy(
+            trading_client,
+            ticker,
+            decision,
+            current_position,
+            cash,
+            strategy_name,
+            {'fast_ema': fast_ema, 'slow_ema': slow_ema, 'trailing_stop': trailing_stop}
+        )
+        logger.info(f"Execution plan: {execution_plan}")
 
-        elif decision['action'] == 'SELL' and current_position and decision['confidence'] > 75:
-            qty_to_sell = float(current_position.qty) * (decision['allocation_pct'] / 100)
-            if qty_to_sell > 0:
-                logger.info(f"EXECUTING SELL: {qty_to_sell:.4f} units of {ticker}")
-                try:
-                    place_order(trading_client, ticker, OrderSide.SELL, qty_to_sell, None, time_in_force=TimeInForce.GTC)
-                except Exception as e:
-                    logger.error(f"Sell Order Failed: {e}")
-        else:
-            logger.info(f"Decision: HOLD / No action taken for {ticker}.")
+        # 8. Apply Execution Plan (interact with API)
+        apply_execution_plan(trading_client, ticker, execution_plan)
 
     except Exception as e:
         logger.error(f"Error evaluating {ticker}: {e}")
