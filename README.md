@@ -81,23 +81,55 @@ params = get_best_parameters_json("SOL/USD", "CRYPTO")
 - Alpaca API account (paper or live)
 - Google Gemini API key
 
-### Installation
+### 1. Create Alpaca Paper Trading Account
 
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+The bot uses **Alpaca's paper trading account** to safely test strategies without real money.
 
-### Configuration
+**Steps:**
+1. Go to [Alpaca Markets](https://alpaca.markets)
+2. Click **Sign Up** and create a free account
+3. Verify your email
+4. In your dashboard, navigate to **API Keys** (under Account)
+5. Create a new **Paper Trading API Key** (if you don't have one)
+6. Copy your `API Key` and `Secret Key` — you'll need these for the `.env` file
+
+**Recommended Tutorial:** [Alpaca Paper Trading Setup Guide](https://alpaca.markets/learn/getting-started-with-alpaca/)
+
+Paper trading gives you:
+- Real market data (live)
+- Simulated $25,000 starting balance
+- Same API as live trading (easy transition later)
+- No risk, full learning experience
+
+### 2. Get Google Gemini API Key
+
+The bot uses Gemini 2.0 Flash for AI trading decisions.
+
+**Steps:**
+1. Go to [Google AI Studio](https://aistudio.google.com)
+2. Click **Get API Key** (top left)
+3. Create a new project if prompted
+4. Copy your Gemini API key
+
+### 3. Clone & Install
+
+```bash
+git clone https://github.com/maximusdurden/ai-trader.git
+cd ai-trader
+pip install -r requirements.txt
+```
+
+### 4. Configure Environment
 
 Create a `.env` file in the project root with your API keys:
 
 ```
-ALPACA_PAPER_KEY=your_alpaca_key
-ALPACA_PAPER_SECRET=your_alpaca_secret
-GEMINI_API_KEY=your_gemini_key
+ALPACA_PAPER_KEY=your_alpaca_api_key
+ALPACA_PAPER_SECRET=your_alpaca_api_secret
+GEMINI_API_KEY=your_gemini_api_key
 ```
+
+**Security:** Never commit `.env` to git. The `.gitignore` file already protects it.
 
 ## Usage
 
@@ -162,22 +194,70 @@ conn.commit()
 conn.close()
 ```
 
-## Testing
+## Testing & Running the Bot
 
-Run tests:
+### First Run: Test Connection
 
-```bash
-python main_test.py
-```
-
-Test connection:
+Before running the bot, test that your API keys are configured correctly:
 
 ```bash
 python test_connection.py
 ```
 
-Inspect market data:
+This will:
+- Verify Alpaca credentials work
+- Fetch current account balance
+- Test Gemini API connectivity
+- Show any configuration errors
+
+Expected output:
+```
+[OK] Connected to Alpaca
+[OK] Account equity: $25,000.00
+[OK] Gemini API active
+```
+
+### Run the Bot
+
+Start the trading bot:
+
+```bash
+python main.py
+```
+
+The bot will:
+1. Load all active tickers from the database (where `is_active = 1` in `best_parameters`)
+2. Evaluate each ticker every 5 minutes
+3. Log decisions, trades, and errors to console
+4. Continue until interrupted (Ctrl+C)
+
+Example log output:
+```
+2026-04-21 15:30:45 - INFO - --- Evaluating SOL/USD ---
+2026-04-21 15:30:45 - INFO - Loaded parameters for SOL/USD: EMA(12,26), Stop=2.5%
+2026-04-21 15:30:46 - INFO - Gemini Decision: BUY (Confidence: 82%)
+2026-04-21 15:30:46 - INFO - EXECUTING BUY: 10.5 units of SOL/USD at ~$185.50
+```
+
+### Advanced Testing
+
+Run unit tests:
+
+```bash
+python main_test.py
+```
+
+Inspect market data and news:
 
 ```bash
 python inspect_news.py
 ```
+
+### Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `429 Resource exhausted` | Gemini API rate limit — bot retries automatically with backoff |
+| `No parameters found for ticker` | Add parameters to `best_parameters` table for the ticker, or ensure `is_active = 1` |
+| `No open position` warning | Normal — bot is looking for positions to close. Not an error. |
+| `NetworkError` | Check internet connection and API key validity |
